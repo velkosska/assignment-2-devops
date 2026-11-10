@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Lend{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="{{ url_for('home') }}">Lend</a>
+    <nav>
+      <a href="{{ url_for('home') }}" {% if request.endpoint == 'home' %}aria-current="page"{% endif %}>Home</a>
+      <a href="{{ url_for('tools') }}" {% if request.endpoint == 'tools' %}aria-current="page"{% endif %}>Tools</a>
+      <a href="{{ url_for('loans') }}" {% if request.endpoint == 'loans' %}aria-current="page"{% endif %}>Loans</a>
+      <a href="{{ url_for('loan_history') }}" {% if request.endpoint == 'loan_history' %}aria-current="page"{% endif %}>History</a>
+    </nav>
+  </header>
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>

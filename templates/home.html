@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Lend{% endblock %}
+{% block body %}
+  <h1>Workshop desk</h1>
+  <p class="lede">See what is free, what is out, and what is late. Then follow the three steps below.</p>
+  <section class="cards">
+    <a class="card" href="{{ url_for('tools') }}">
+      <span>Free to borrow</span>
+      <strong>{{ desk.free }}</strong>
+    </a>
+    <a class="card" href="{{ url_for('loans') }}#out">
+      <span>Out right now</span>
+      <strong>{{ desk.out }}</strong>
+    </a>
+    <a class="card" href="{{ url_for('loans') }}#out">
+      <span>Overdue</span>
+      <strong>{{ desk.overdue }}</strong>
+    </a>
+  </section>
+  <ol class="steps">
+    <li>
+      <a href="{{ url_for('tools') }}">Add a tool</a>
+      <p>Name it and give it a category. A retired tool, or one that is out, cannot be lent.</p>
+    </li>
+    <li>
+      <a href="{{ url_for('loans') }}">Add a member</a>
+      <p>A member needs a name and an email. The same email cannot be registered twice.</p>
+    </li>
+    <li>
+      <a href="{{ url_for('loans') }}#out">Lend it for seven days</a>
+      <p>Pick the member and a free tool. When it comes back, press Return. If it is still out after the due date, the row says Overdue. Nothing emails the member.</p>
+    </li>
+  </ol>
+  <p class="path">Database file: {{ desk.path }}</p>
+{% endblock %}

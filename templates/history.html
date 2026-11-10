@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}History · Lend{% endblock %}
+{% block body %}
+  <h1>History</h1>
+  <p class="lede">Loans that have been returned. Repeat lends the same tool to the same member for another seven days. The old loan stays on this page.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <section class="panel">
+    {% if loans %}
+    <table>
+      <tr>
+        <th>Tool</th>
+        <th>Member</th>
+        <th>Borrowed</th>
+        <th>Due</th>
+        <th>Returned</th>
+        <th></th>
+      </tr>
+      {% for loan in loans %}
+      <tr>
+        <td>{{ loan.tool_name }}</td>
+        <td>{{ loan.member_name }}</td>
+        <td>{{ loan.borrowed_at[:10] }}</td>
+        <td>{{ loan.due_at[:10] }}</td>
+        <td>{{ loan.returned_at[:10] }}</td>
+        <td>
+          <form method="post" action="{{ url_for('repeat', loan_id=loan.id) }}">
+            <button type="submit">Repeat</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No returned loans yet. They show up here after you press Return.</p>
+    {% endif %}
+  </section>
+{% endblock %}
