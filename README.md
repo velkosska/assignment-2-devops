@@ -1,82 +1,93 @@
 # Lend
 
-A one-desk tool library for a volunteer workshop. One Python process stores tools, members, and loans in a single SQLite file.
+A one-desk tool library for a volunteer workshop, split into two services along the seam of ADR-2:
 
-## Run on a laptop
+| Part | Folder | Owns | Local URL |
+|---|---|---|---|
+| catalog service | `services/catalog` | `tools` (database `catalog`) | http://localhost:8001 |
+| loans service | `services/loans` | `members`, `loans` (database `loans`) | http://localhost:8002 |
+| static UI | `ui/` | nothing, it calls both services from the browser | http://localhost:8080 |
+
+Each service is a Flask JSON API in its own container with its own SQL Server database and login. They talk to each other over HTTP only:
+
+- Borrow and repeat: loans calls `GET {CATALOG_URL}/tools/{id}` to check that the tool exists and is not retired.
+- Retire: catalog calls `GET {LOANS_URL}/loans?tool_id={id}` to refuse retiring a tool that is out.
+
+Every outbound call has a 2 second timeout. If the other service is down, the call answers `503` with a clear message and writes nothing. The service's own endpoints and `/health` keep working.
+
+## Run the whole system locally
+
+Requirements: Docker Desktop. On Apple Silicon, enable *Settings → General → Use Rosetta for x86_64/amd64 emulation*, because the SQL Server image is amd64 only.
 
 ```bash
-python -m venv .venv
+cp .env.example .env
+docker compose up --build
+```
+
+Open http://localhost:8080. Compose starts the services in this order:
+
+1. `sqlserver` (`mcr.microsoft.com/mssql/server:2022-latest`) becomes healthy once `sqlcmd ... SELECT 1` answers.
+2. `db-init` runs `db/init.sql` and exits. The script is idempotent and creates the databases `catalog` and `loans` and the logins `catalog_user` and `loans_user`, each with access to its own database only.
+3. `catalog` and `loans` apply their pending migrations (`services/<name>/migrations/NNN_*.sql`, recorded in `schema_migrations`), then start gunicorn.
+4. `ui` is stock `nginx:alpine` serving `ui/` read-only. It is not a service container.
+
+Useful commands:
+
+```bash
+docker compose ps                 # what is running and healthy
+docker compose logs -f loans      # one line per request: method, path, status, duration
+curl localhost:8001/health        # {"status": "ok", "db": "ok", "version": "local"}
+docker compose stop catalog       # partial failure: loans keeps serving, borrowing answers 503
+docker compose start catalog
+docker compose down               # keep the data volume
+docker compose down -v            # also delete the database
+```
+
+## Configuration
+
+| Variable | Service | Default | Meaning |
+|---|---|---|---|
+| `PORT` | both | `8000` | Port the service listens on |
+| `DATABASE_URL` | both | none (secret) | `mssql://user:password@host:1433/database` |
+| `ALLOWED_ORIGIN` | both | `http://localhost:8080` | The only origin allowed by CORS |
+| `GIT_SHA` | both | `dev` | Version reported by `/health` |
+| `DB_CONNECT_ATTEMPTS` | both | `10` | Connection attempts with exponential backoff |
+| `LOANS_URL` | catalog | `http://loans:8000` | Base URL of the loans service |
+| `LOANS_TIMEOUT_S` | catalog | `2` | Timeout for calls to loans |
+| `CATALOG_URL` | loans | `http://catalog:8000` | Base URL of the catalog service |
+| `CATALOG_TIMEOUT_S` | loans | `2` | Timeout for calls to catalog |
+
+The UI reads the two service URLs from `ui/config.js`. The committed file points at localhost, and deployment will generate it.
+
+## Run a single service
+
+With the compose SQL Server running (`docker compose up -d sqlserver db-init`):
+
+```bash
+cd services/catalog
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+DATABASE_URL=mssql://catalog_user:Local-Catalog_Passw0rd@localhost:1433/catalog \
+LOANS_URL=http://localhost:8002 python app.py
+```
+
+`python app.py` applies migrations and then serves on `PORT` (default 8000). The same works for `services/loans` with `loans_user`, database `loans` and `CATALOG_URL`.
+
+## Tests and coverage
+
+Tests run against a throwaway `*_test` database on the compose SQL Server. The other service is replaced by a stub function, so each service is tested on its own.
+
+```bash
+docker compose up -d sqlserver
+cd services/catalog   # or services/loans
 source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
+TEST_DATABASE_URL=mssql://sa:Local-Sa_Passw0rd@localhost:1433/catalog_test \
+  pytest --cov=. --cov-report=term-missing
+ruff check . && ruff format --check .
 ```
 
-Open http://127.0.0.1:5000
+Use `loans_test` as the database name for the loans service.
 
-The app reads two environment variables.
+## Assignment 1
 
-| Variable | Default | SQLite path |
-|---|---|---|
-| `PORT` | `5000` | |
-| `DATA_DIR` | `data` | `$DATA_DIR/lend.db`, so `data/lend.db` |
-
-```bash
-PORT=8000 DATA_DIR=/tmp/lend python app.py
-```
-
-The home page shows how many tools are free, out, and overdue, plus the three steps for adding a tool, adding a member, and lending for 7 days. `/tools` adds a tool, lists tools as available, out, or retired, and retires a tool when it has no open loan. `/loans` registers a member, lends an available tool for 7 days, marks a return, and shows Overdue when an open loan is past its due date. `/loans/history` lists returned loans and can repeat one for another 7 days. The process binds to `0.0.0.0`.
-
-## Run in the container
-
-`Dockerfile` is the provided template. It sets `PORT=8000` and `DATA_DIR=/data`, copies `app.py`, `lend/`, `templates/`, and `static/`, and starts with `python app.py`.
-
-```bash
-docker build -t lend .
-docker run -p 8000:8000 -v lend-data:/data lend
-```
-
-Open http://127.0.0.1:8000
-
-Inside that container the SQLite file is `/data/lend.db` on the Docker volume `lend-data`. The laptop file `data/lend.db` is a different database. Use the same `-v lend-data:/data` the next time you start the container if you want those rows again.
-
-## Tests
-
-Core catalog and loan rules are covered at 96%.
-
-```bash
-pytest --cov=lend.catalog --cov=lend.loans --cov-report=term-missing
-```
-
-The command covers `lend/catalog.py` and `lend/loans.py`. Route functions in `app.py` are outside that measurement.
-
-## Container contract
-
-`container/run.sh` reported:
-
-```
-=== SDD Assignment 1 contract check ===
-Repository: /Users/marijavelkoska/Desktop/assignment_1
-
-==> Repository shape
-  PASS  one Dockerfile, one manifest (requirements.txt)
-
-==> Build from a clean context, no build args
-  PASS  image built
-  PASS  image size 53 MB
-
-==> Start on PORT=8000 and reach it from the host
-  PASS  HTTP 200 from http://localhost:8000/
-
-==> SQLite file under DATA_DIR
-  PASS  found in /data: lend.db
-
-==> Data persists, and a second boot does not re-seed
-  PASS  volume at /data persists
-  PASS  row counts unchanged across restart: loans=0 members=0 tools=0
-
-==> PORT override is honoured (not hardcoded)
-  PASS  HTTP 200 from http://localhost:9123/
-
-=== ALL CHECKS PASSED ===
-```
-# assignment-2-devops
+The Assignment 1 monolith (`app.py`, `lend/`, `templates/`, one SQLite file) was replaced by the split above. It is still in the Git history at the commit "Import the Assignment 1 monolith as the starting point". ADR-1 to ADR-5 describe it.

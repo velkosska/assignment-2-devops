@@ -1,0 +1,7 @@
+CREATE TABLE tools (
+  id INT IDENTITY(1, 1) PRIMARY KEY,
+  name NVARCHAR(200) NOT NULL,
+  category NVARCHAR(200) NOT NULL,
+  retired BIT NOT NULL CONSTRAINT tools_retired_default DEFAULT 0,
+  created_at NVARCHAR(32) NOT NULL
+);

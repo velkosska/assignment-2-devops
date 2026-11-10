@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loans · Lend</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="loans">
+  <header class="top">
+    <a class="brand" href="index.html">Lend</a>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="tools.html">Tools</a>
+      <a href="loans.html" aria-current="page">Loans</a>
+      <a href="history.html">History</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Loans</h1>
+    <p class="lede">A member borrows one available tool for seven days. Return it here when it comes back. Overdue means the tool is still out past its due date.</p>
+    <p class="error" id="error" hidden></p>
+    <div id="notices"></div>
+    <div class="stack">
+      <section class="panel" id="out">
+        <h2>Out now</h2>
+        <div id="open-loans"><p class="empty">Loading…</p></div>
+      </section>
+      <section class="panel">
+        <h2>Add a member</h2>
+        <p class="hint">A member needs a name and an email before they can borrow.</p>
+        <form id="add-member">
+          <label>Name <input name="name" required placeholder="Ada"></label>
+          <label>Email <input name="email" type="email" required placeholder="ada@example.com"></label>
+          <button type="submit">Add member</button>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>Borrow a tool</h2>
+        <div id="borrow"><p class="empty">Loading…</p></div>
+      </section>
+    </div>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+name: lend
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?copy .env.example to .env}
+    ports: ["1433:1433"]
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      SQLCMDPASSWORD: ${MSSQL_SA_PASSWORD}
+    volumes:
+      - ./db:/db:ro
+    entrypoint:
+      - /opt/mssql-tools18/bin/sqlcmd
+      - -C
+      - -b
+      - -S
+      - sqlserver
+      - -U
+      - sa
+      - -i
+      - /db/init.sql
+      - -v
+      - CATALOG_PWD=${CATALOG_DB_PASSWORD:?copy .env.example to .env}
+      - -v
+      - LOANS_PWD=${LOANS_DB_PASSWORD:?copy .env.example to .env}
+    restart: "no"
+
+  catalog:
+    build: ./services/catalog
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      PORT: 8000
+      DATABASE_URL: mssql://catalog_user:${CATALOG_DB_PASSWORD}@sqlserver:1433/catalog
+      LOANS_URL: http://loans:8000
+      LOANS_TIMEOUT_S: 2
+      ALLOWED_ORIGIN: http://localhost:8080
+      GIT_SHA: ${GIT_SHA:-local}
+    ports: ["8001:8000"]
+
+  loans:
+    build: ./services/loans
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      PORT: 8000
+      DATABASE_URL: mssql://loans_user:${LOANS_DB_PASSWORD}@sqlserver:1433/loans
+      CATALOG_URL: http://catalog:8000
+      CATALOG_TIMEOUT_S: 2
+      ALLOWED_ORIGIN: http://localhost:8080
+      GIT_SHA: ${GIT_SHA:-local}
+    ports: ["8002:8000"]
+
+  ui:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    ports: ["8080:80"]
+
+volumes:
+  sqlserver-data:

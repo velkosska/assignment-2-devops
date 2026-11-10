@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tools · Lend</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="tools">
+  <header class="top">
+    <a class="brand" href="index.html">Lend</a>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="tools.html" aria-current="page">Tools</a>
+      <a href="loans.html">Loans</a>
+      <a href="history.html">History</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Tools</h1>
+    <p class="lede">Add a tool to the shelf. Retire it when the workshop no longer lends it. A tool that is out on loan cannot be retired.</p>
+    <p class="error" id="error" hidden></p>
+    <div id="notices"></div>
+    <div class="stack">
+      <section class="panel">
+        <h2>Add a tool</h2>
+        <form id="add-tool">
+          <label>Name <input name="name" required placeholder="Hammer"></label>
+          <label>Category <input name="category" required placeholder="Hand tools"></label>
+          <button type="submit">Add tool</button>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>On record</h2>
+        <div id="tools"><p class="empty">Loading…</p></div>
+      </section>
+    </div>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

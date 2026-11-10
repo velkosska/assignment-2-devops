@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lend</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="home">
+  <header class="top">
+    <a class="brand" href="index.html">Lend</a>
+    <nav>
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="tools.html">Tools</a>
+      <a href="loans.html">Loans</a>
+      <a href="history.html">History</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Workshop desk</h1>
+    <p class="lede">See what is free, what is out, and what is late. Then follow the three steps below.</p>
+    <div id="notices"></div>
+    <section class="cards">
+      <a class="card" href="tools.html">
+        <span>Free to borrow</span>
+        <strong id="free">…</strong>
+      </a>
+      <a class="card" href="loans.html#out">
+        <span>Out right now</span>
+        <strong id="out">…</strong>
+      </a>
+      <a class="card" href="loans.html#out">
+        <span>Overdue</span>
+        <strong id="overdue">…</strong>
+      </a>
+    </section>
+    <ol class="steps">
+      <li>
+        <a href="tools.html">Add a tool</a>
+        <p>Name it and give it a category. A retired tool, or one that is out, cannot be lent.</p>
+      </li>
+      <li>
+        <a href="loans.html">Add a member</a>
+        <p>A member needs a name and an email. The same email cannot be registered twice.</p>
+      </li>
+      <li>
+        <a href="loans.html#out">Lend it for seven days</a>
+        <p>Pick the member and a free tool. When it comes back, press Return. If it is still out after the due date, the row says Overdue. Nothing emails the member.</p>
+      </li>
+    </ol>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

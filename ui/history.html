@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>History · Lend</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="history">
+  <header class="top">
+    <a class="brand" href="index.html">Lend</a>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="tools.html">Tools</a>
+      <a href="loans.html">Loans</a>
+      <a href="history.html" aria-current="page">History</a>
+    </nav>
+  </header>
+  <main>
+    <h1>History</h1>
+    <p class="lede">Loans that have been returned. Repeat lends the same tool to the same member for another seven days. The old loan stays on this page.</p>
+    <p class="error" id="error" hidden></p>
+    <div id="notices"></div>
+    <section class="panel">
+      <div id="history"><p class="empty">Loading…</p></div>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

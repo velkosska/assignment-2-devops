@@ -176,3 +176,12 @@ tr.overdue { background: var(--danger-bg); }
   .cards { grid-template-columns: 1fr; }
   .top { align-items: flex-start; flex-direction: column; }
 }
+
+.notice {
+  background: #fbf3df;
+  color: #6b5317;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+}
+
+[hidden] { display: none !important; }
