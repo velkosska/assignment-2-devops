@@ -88,6 +88,23 @@ ruff check . && ruff format --check .
 
 Use `loans_test` as the database name for the loans service.
 
+## CI/CD
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request:
+
+1. **test**, once per service: install `requirements-dev.txt`, run `ruff check` and `ruff format --check`, start a throwaway SQL Server container with a random masked SA password, and run `pytest --cov`. The job fails below 70% coverage. CI never connects to Azure SQL.
+2. **build**, once per service, only if both test jobs passed: build the image from `services/<name>/Dockerfile`. A failed build fails the run.
+3. **publish**, only on a push to `main`: the same build job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
+
+Images:
+
+```bash
+docker pull ghcr.io/velkosska/lend-catalog:<commit-sha>
+docker pull ghcr.io/velkosska/lend-loans:<commit-sha>
+```
+
+Pull requests only build. Nothing is pushed until the change is merged to `main`.
+
 ## Assignment 1
 
 The Assignment 1 monolith (`app.py`, `lend/`, `templates/`, one SQLite file) was replaced by the split above. It is still in the Git history at the commit "Import the Assignment 1 monolith as the starting point". ADR-1 to ADR-5 describe it.
