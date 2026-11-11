@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/lend
+
+jobs:
+  test:
+    name: test (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [catalog, loans]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
+      # A throwaway SQL Server for this job only. The SA password is generated
+      # here and masked, so no database password lives in the repo or in secrets.
+      - name: Start SQL Server
+        run: |
+          PW="Ci-$(openssl rand -hex 12)-Aa1"
+          echo "::add-mask::$PW"
+          echo "MSSQL_SA_PASSWORD=$PW" >> "$GITHUB_ENV"
+          docker run -d --name sqlserver -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$PW" \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          for attempt in $(seq 1 40); do
+            if docker exec sqlserver /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$PW" \
+                 -Q "SELECT 1" > /dev/null 2>&1; then
+              echo "SQL Server is ready after $attempt checks"
+              exit 0
+            fi
+            sleep 3
+          done
+          docker logs sqlserver
+          exit 1
+
+      - name: Test with coverage
+        run: |
+          export TEST_DATABASE_URL="mssql://sa:${MSSQL_SA_PASSWORD}@localhost:1433/${{ matrix.service }}_test"
+          pytest --cov=. --cov-report=term-missing
+
+  build:
+    name: build (${{ matrix.service }})
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [catalog, loans]
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build${{ env.PUBLISH == 'true' && ' and push' || '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Summary
+        run: |
+          if [ "$PUBLISH" = "true" ]; then
+            echo "Pushed ${IMAGE_PREFIX}-${{ matrix.service }}:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Built ${{ matrix.service }} without pushing (not a push to main)" >> "$GITHUB_STEP_SUMMARY"
+          fi
