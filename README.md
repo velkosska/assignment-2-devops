@@ -92,7 +92,7 @@ Use `loans_test` as the database name for the loans service.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request:
 
-1. **test**, once per service: install `requirements-dev.txt`, run `ruff check` and `ruff format --check`, start a throwaway SQL Server container with a random masked SA password, and run `pytest --cov`. The job fails below 70% coverage. CI never connects to Azure SQL.
+1. **test**, once per service: install `requirements-dev.txt`, run `ruff check` and `ruff format --check`, validate `services/<name>/openapi.yaml` with `openapi-spec-validator`, start a throwaway SQL Server container with a random masked SA password, and run `pytest --cov`. The job fails below 70% coverage. CI never connects to Azure SQL.
 2. **images**, once per service, only if both test jobs passed: build the image from `services/<name>/Dockerfile`. A failed build fails the run.
 3. **publish**, only on a push to `main`: the same `images` job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
 

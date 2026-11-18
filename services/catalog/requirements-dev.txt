@@ -2,3 +2,5 @@
 pytest==9.2.0
 pytest-cov==7.1.0
 ruff==0.17.4
+pyyaml==6.0.3
+openapi-spec-validator==0.9.0
