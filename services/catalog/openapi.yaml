@@ -1,0 +1,181 @@
+openapi: 3.0.3
+info:
+  title: Lend catalog service
+  version: 1.0.0
+  description: >-
+    Owns the tools table. Loans calls GET /tools/{tool_id} on this service
+    before it lends a tool. Every endpoint can also answer 503 with an Error
+    body when this service's own database is unavailable.
+servers:
+  - url: http://localhost:8001
+    description: Local docker compose. Deployed URLs come from configuration.
+paths:
+  /health:
+    get:
+      summary: Health of this service and its own database
+      operationId: getHealth
+      responses:
+        "200":
+          description: The service can read and write its own database.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: The database cannot be reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /tools:
+    get:
+      summary: List all tools, ordered by name
+      operationId: listTools
+      responses:
+        "200":
+          description: All tools, retired ones included.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tool"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
+    post:
+      summary: Add a tool
+      operationId: createTool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewTool"
+      responses:
+        "201":
+          description: The tool was added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tool"
+        "400":
+          description: Name or category is missing or blank.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
+  /tools/{tool_id}:
+    get:
+      summary: Get one tool. Called by the loans service.
+      operationId: getTool
+      parameters:
+        - $ref: "#/components/parameters/ToolId"
+      responses:
+        "200":
+          description: The tool.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tool"
+        "404":
+          description: There is no tool with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/DatabaseUnavailable"
+  /tools/{tool_id}/retire:
+    post:
+      summary: Retire a tool that is not out on loan
+      description: >-
+        Asks the loans service (GET /loans?tool_id=) whether the tool is out,
+        with a timeout. If loans does not answer, nothing is changed.
+      operationId: retireTool
+      parameters:
+        - $ref: "#/components/parameters/ToolId"
+      responses:
+        "200":
+          description: The tool is retired. Retiring a retired tool is a no-op.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tool"
+        "404":
+          description: There is no tool with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The tool is out on loan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The loans service or this service's database is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  parameters:
+    ToolId:
+      name: tool_id
+      in: path
+      required: true
+      schema:
+        type: integer
+  responses:
+    DatabaseUnavailable:
+      description: This service's database is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Tool:
+      type: object
+      required: [id, name, category, retired, created_at]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+        retired:
+          type: boolean
+        created_at:
+          type: string
+          description: ISO 8601 timestamp in UTC.
+    NewTool:
+      type: object
+      required: [name, category]
+      properties:
+        name:
+          type: string
+        category:
+          type: string
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        db:
+          type: string
+          enum: [ok, unavailable]
+        version:
+          type: string
+          description: Value of GIT_SHA, or dev.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
