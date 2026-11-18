@@ -67,8 +67,8 @@ jobs:
           export TEST_DATABASE_URL="mssql://sa:${MSSQL_SA_PASSWORD}@localhost:1433/${{ matrix.service }}_test"
           pytest --cov=. --cov-report=term-missing
 
-  build:
-    name: build (${{ matrix.service }})
+  images:
+    name: images (${{ matrix.service }})
     needs: test
     runs-on: ubuntu-latest
     permissions:
