@@ -120,6 +120,43 @@ docker pull ghcr.io/velkosska/lend-loans:<commit-sha>
 
 Pull requests only build. Nothing is pushed until the change is merged to `main`.
 
+## First-time Azure setup
+
+Everything is deployed into one resource group in my own Azure for Students subscription, and everything is named with the prefix `mvelkoska`. The resource group `rg-mvelkoska`, the SQL server `mvelkoska` and the storage account `mvelkoska` (static website, `https://mvelkoska.z28.web.core.windows.net`) were created first from the course guide. [`infra/setup.sh`](infra/setup.sh) does the rest, once. After it has run, nothing is created or changed by hand: the pipeline deploys.
+
+| Resource | Name | Cost model |
+|---|---|---|
+| Resource group | `rg-mvelkoska` (already existed) | free |
+| Managed identity for GitHub Actions | `mvelkoska-github` | free |
+| Container Apps environment (and its Log Analytics workspace) | `mvelkoska-env` | pay per use, logs free up to 5 GB a month |
+| Container apps, 0 to 1 replica | `mvelkoska-catalog`, `mvelkoska-loans` | pay per use, nothing while idle |
+| SQL server | `mvelkoska` | free |
+| Serverless databases (free offer, General Purpose Gen5, 0.5 to 1 vCore, local backups) | `mvelkoska-catalog-db`, `mvelkoska-loans-db` | free offer, pauses after 60 minutes idle |
+| Storage account with static website (the UI) | `mvelkoska` | pay per use |
+
+Requirements on your machine: Azure CLI (`az login` into the Azure for Students subscription), GitHub CLI (`gh auth login`) and Docker running.
+
+The SQL server must allow SQL logins, because each service connects with its own username and password. The server from the guide was created with Microsoft Entra-only authentication, so before the first run I turned that off (`az sql server ad-only-auth disable -g rg-mvelkoska -n mvelkoska`) and set a password for the server admin in the portal. The script asks for that password once.
+
+```bash
+PREFIX=mvelkoska RESOURCE_GROUP=rg-mvelkoska RENAME_DB_FROM=free-sql-db-3497981 \
+  ./infra/setup.sh
+```
+
+What the script does, in order. Each step checks first and skips what already exists, so a second run changes nothing:
+
+1. Refuses to run unless `PREFIX` and `RESOURCE_GROUP` are set, the active subscription is Azure for Students, and the resource group exists. It never creates a resource group.
+2. Registers the providers `Microsoft.App`, `Microsoft.OperationalInsights` and `Microsoft.ManagedIdentity`. They are off by default on a student subscription and Container Apps cannot be created without them.
+3. Creates the managed identity `mvelkoska-github` with a federated credential for `repo:velkosska/assignment-2-devops:ref:refs/heads/main`, so only workflow runs on `main` of this repository can sign in as it (OpenID Connect, no password anywhere). It gets Contributor on the resource group and nothing wider.
+4. If `PROFESSOR_ID` is set, gives the professor Reader on the resource group. Run the script again with it before submitting if it was not known the first time.
+5. Renames the database from the guide to `mvelkoska-catalog-db`, creates `mvelkoska-loans-db`, and makes sure both are on the free offer with 0.5 to 1 vCore and locally redundant backups. The server from the guide had its public endpoint switched off, which blocks every firewall rule, so the script switches it on (the Container Apps reach the database through it) and allows Azure services through the firewall.
+6. Opens the firewall for one IP only while it runs (the public IP the database sees, read from inside the container that connects, because it can differ from your machine's own). It does this early, because a new rule can take a few minutes to spread, and it keeps retrying for up to 5 minutes while the rule spreads or a paused database resumes. It asked for the SQL admin password at the start (not shown, not saved). Then it creates one login per service, `catalog_user` and `loans_user`, each with access to its own database only. It then proves this by connecting as each login and failing to open the other database. This step runs inside the `lend-catalog` image, which already contains `pymssql`, so nothing is installed on your machine.
+7. Creates the Container Apps environment and the two apps, from the public `latest` images, with minimum 0 and maximum 1 replica, so migrations run at startup never run twice at once. The pipeline replaces the image with the commit SHA and sets every secret and variable.
+8. Checks that the storage account's static website is enabled.
+9. Stores the pipeline's secrets in GitHub with `gh secret set`, reading the values from standard input: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `CATALOG_DB_URL` and `LOANS_DB_URL`. The generated database passwords are never printed, written to a file or put in a command line.
+
+An existing login is left alone, so a second run does not break the secret that is already in GitHub. To replace a password (for example after a leak), run it again with `ROTATE=1`: it changes the password in Azure and in the GitHub secret together.
+
 ## Assignment 1
 
 The Assignment 1 monolith (`app.py`, `lend/`, `templates/`, one SQLite file) was replaced by the split above. It is still in the Git history at the commit "Import the Assignment 1 monolith as the starting point". ADR-1 to ADR-5 describe it.
