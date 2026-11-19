@@ -111,6 +111,7 @@ The tests stop and start the `catalog` and `loans` containers themselves, so do 
 3. **system**, once: validate [`system.yaml`](system.yaml) against the provided [`system.schema.json`](system.schema.json) and check it against the code (see below).
 4. **images**, once per service, only if `test`, `integration` and `system` passed: build the image from `services/<name>/Dockerfile`. A failed build fails the run.
 5. **publish**, only on a push to `main`: the same `images` job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
+6. **deploy services**, only on a push to `main`, after `images`: see "Deployment to Azure" below.
 
 ### System description
 
@@ -135,6 +136,21 @@ docker pull ghcr.io/velkosska/lend-loans:<commit-sha>
 ```
 
 Pull requests only build. Nothing is pushed until the change is merged to `main`.
+
+### Deployment to Azure
+
+On a push to `main`, after every job above passed for that same commit, the **deploy services** job (`needs: [images]`) deploys to Azure with no manual step. It never runs on a pull request.
+
+1. **Sign in with OpenID Connect.** `azure/login` exchanges the run's GitHub token for an Azure token as the managed identity `mvelkoska-github`. That identity trusts only runs on `main` of this repository and has Contributor on `rg-mvelkoska` only. No Azure password exists anywhere, and the job has `id-token: write` and nothing else beyond reading the repository.
+2. **Set the database secret.** `az containerapp secret set` stores `CATALOG_DB_URL` or `LOANS_DB_URL` (GitHub secrets, written by `infra/setup.sh`) as a Container Apps secret. The app only receives `DATABASE_URL=secretref:database-url`, never the value as a plain environment variable.
+3. **Update the app.** `az containerapp update` points the app at `ghcr.io/velkosska/lend-<service>:<commit-sha>`, the image CI built and tested for this commit, and sets the other variables: `PORT`, `ALLOWED_ORIGIN` (the UI's static website, the only origin allowed by CORS), `GIT_SHA` (so `/health` reports the running version), and the other service's URL and a 10 second timeout, read from Azure and not hardcoded. It also sets 0 to 1 replicas on every deploy, so a migration at startup never runs twice at once.
+
+Only one deployment runs at a time (`concurrency: deploy`, without cancelling), and a newer push to `main` does not cancel a run in progress. Do not add `environment:` to the job: it would change the token's subject and Azure would refuse the sign-in.
+
+| GitHub secret | Holds | Written by |
+|---|---|---|
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | Identifiers of the managed identity and subscription, not passwords | `infra/setup.sh` |
+| `CATALOG_DB_URL`, `LOANS_DB_URL` | Connection string of each service's own database | `infra/setup.sh` (random password, never printed) |
 
 ## First-time Azure setup
 
