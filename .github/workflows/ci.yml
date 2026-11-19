@@ -123,9 +123,36 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  # system.yaml must follow the provided schema and tell the truth about the code.
+  # Pure files, no database, no Azure and no secrets.
+  system:
+    name: system.yaml
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tests/system/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r tests/system/requirements.txt
+
+      - name: Lint
+        run: |
+          ruff check tests/system
+          ruff format --check tests/system
+
+      - name: Validate system.yaml against the schema and the code
+        run: pytest tests/system -v
+
   images:
     name: images (${{ matrix.service }})
-    needs: [test, integration]
+    needs: [test, integration, system]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -108,8 +108,24 @@ The tests stop and start the `catalog` and `loans` containers themselves, so do 
 
 1. **test**, once per service: install `requirements-dev.txt`, run `ruff check` and `ruff format --check`, validate `services/<name>/openapi.yaml` with `openapi-spec-validator`, start a throwaway SQL Server container with a random masked SA password, and run `pytest --cov`. The job fails below 70% coverage. CI never connects to Azure SQL.
 2. **integration**, once: write a `.env` with random masked passwords, start the compose stack and run `tests/integration`. The `.env` is never committed and is not a GitHub secret.
-3. **images**, once per service, only if `test` and `integration` passed: build the image from `services/<name>/Dockerfile`. A failed build fails the run.
-4. **publish**, only on a push to `main`: the same `images` job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
+3. **system**, once: validate [`system.yaml`](system.yaml) against the provided [`system.schema.json`](system.schema.json) and check it against the code (see below).
+4. **images**, once per service, only if `test`, `integration` and `system` passed: build the image from `services/<name>/Dockerfile`. A failed build fails the run.
+5. **publish**, only on a push to `main`: the same `images` job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
+
+### System description
+
+[`system.yaml`](system.yaml) describes every service, every environment variable it reads, its calls across the seam and its Azure resources, in the format of the provided `system.schema.json` (copied unchanged). Each service's endpoints are in `services/<name>/openapi.yaml`. A schema only checks the shape of a file, so `tests/system/test_system.py` also checks that the file tells the truth:
+
+- the variables listed for a service are exactly the ones its code reads, a variable with a default in the code has the same default in the file, and a variable without one is marked `secret: true`;
+- every endpoint under `calls` exists in the other service's `openapi.yaml`, and the `url_env` is a listed variable;
+- the services are the ones `docker-compose.yml` builds, and the Azure names are the prefix plus the service name.
+
+```bash
+pip install -r tests/system/requirements.txt
+pytest tests/system -v
+```
+
+`timeout_s` under `calls` is the deployed value (10 seconds). The code default is 2 seconds (`LOANS_TIMEOUT_S`, `CATALOG_TIMEOUT_S`) and the pipeline sets 10 on Azure so that a cold start does not fail the call.
 
 Images:
 
