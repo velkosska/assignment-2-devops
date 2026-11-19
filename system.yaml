@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=./system.schema.json
+# Machine-readable description of the system. CI validates it against
+# system.schema.json and tests/system/test_system.py checks it against the code.
+student: mvelkoska.ieu2024
+prefix: mvelkoska
+public_url: https://mvelkoska.z28.web.core.windows.net
+ui:
+  path: ui
+  storage_account: mvelkoska
+  calls: [catalog, loans]
+azure:
+  resource_group: rg-mvelkoska
+  container_apps_environment: mvelkoska-env
+  sql_server: mvelkoska
+  registry: ghcr.io/velkosska
+services:
+  catalog:
+    description: The tool catalog. Owns the tools table and retires tools.
+    path: services/catalog
+    openapi: services/catalog/openapi.yaml
+    port_default: 8000
+    health: /health
+    migrations: services/catalog/migrations
+    env:
+      PORT: { default: 8000, description: "Port the service listens on" }
+      DATABASE_URL: { secret: true, description: "Connection string of the catalog database (mssql://user:password@host:1433/database)" }
+      ALLOWED_ORIGIN: { default: "http://localhost:8080", description: "The only origin allowed by CORS, the UI's origin. The pipeline sets the storage static website URL." }
+      GIT_SHA: { default: dev, description: "Version reported by /health. The pipeline sets the commit SHA." }
+      DB_CONNECT_ATTEMPTS: { default: 10, description: "Connection attempts to the database, with exponential backoff of 1 to 16 seconds" }
+      LOANS_URL: { default: "http://loans:8000", description: "Base URL of the loans service" }
+      LOANS_TIMEOUT_S: { default: 2, description: "Timeout in seconds for calls to loans. The pipeline sets 10 on Azure so a cold start does not fail the call." }
+    calls:
+      - service: loans
+        url_env: LOANS_URL
+        endpoints: ["GET /loans"]
+        # Deployed value. The code default is 2 (LOANS_TIMEOUT_S) and the pipeline sets 10.
+        timeout_s: 10
+        on_failure: Retiring a tool answers 503 "Loans service unavailable, so the tool cannot be confirmed as not out. Try again shortly." and nothing is changed. Listing and creating tools keep working.
+    azure:
+      container_app: mvelkoska-catalog
+      sql_database: mvelkoska-catalog-db
+  loans:
+    description: Members and loans. Owns the members and loans tables and lends tools.
+    path: services/loans
+    openapi: services/loans/openapi.yaml
+    port_default: 8000
+    health: /health
+    migrations: services/loans/migrations
+    env:
+      PORT: { default: 8000, description: "Port the service listens on" }
+      DATABASE_URL: { secret: true, description: "Connection string of the loans database (mssql://user:password@host:1433/database)" }
+      ALLOWED_ORIGIN: { default: "http://localhost:8080", description: "The only origin allowed by CORS, the UI's origin. The pipeline sets the storage static website URL." }
+      GIT_SHA: { default: dev, description: "Version reported by /health. The pipeline sets the commit SHA." }
+      DB_CONNECT_ATTEMPTS: { default: 10, description: "Connection attempts to the database, with exponential backoff of 1 to 16 seconds" }
+      CATALOG_URL: { default: "http://catalog:8000", description: "Base URL of the catalog service" }
+      CATALOG_TIMEOUT_S: { default: 2, description: "Timeout in seconds for calls to catalog. The pipeline sets 10 on Azure so a cold start does not fail the call." }
+    calls:
+      - service: catalog
+        url_env: CATALOG_URL
+        endpoints: ["GET /tools/{tool_id}"]
+        # Deployed value. The code default is 2 (CATALOG_TIMEOUT_S) and the pipeline sets 10.
+        timeout_s: 10
+        on_failure: Borrowing or repeating a loan answers 503 "Catalog service unavailable, so the tool cannot be checked. Try again shortly." and nothing is written. Members, returns and loan history keep working.
+    azure:
+      container_app: mvelkoska-loans
+      sql_database: mvelkoska-loans-db
