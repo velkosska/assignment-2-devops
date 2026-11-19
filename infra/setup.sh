@@ -115,12 +115,29 @@ CLIENT_ID="$(az identity show -g "$RESOURCE_GROUP" -n "$IDENTITY" --query client
 PRINCIPAL_ID="$(az identity show -g "$RESOURCE_GROUP" -n "$IDENTITY" --query principalId -o tsv)"
 
 # Only workflow runs on the main branch of this repository can sign in as it.
-SUBJECT="repo:${GITHUB_REPO}:ref:refs/heads/main"
+# GitHub puts the numeric owner id and repository id into the token's subject
+# (repo:<owner>@<owner id>/<repo>@<repo id>:ref:...), because names can be renamed or
+# transferred and ids cannot. A trust written with names only never matches, and Azure
+# answers AADSTS700213 "No matching federated identity record". So read the ids from
+# GitHub. OIDC_SUBJECT overrides this if a repository still sends the classic
+# repo:<owner>/<repo>:ref:... form.
+if [ -z "${OIDC_SUBJECT:-}" ]; then
+  repo_ids="$(gh api "repos/${GITHUB_REPO}" --jq '.owner.id, .id' | tr '\n' ' ')"
+  read -r owner_id repo_id <<<"$repo_ids"
+  [[ "$owner_id" =~ ^[0-9]+$ && "$repo_id" =~ ^[0-9]+$ ]] || { echo "Could not read the ids of $GITHUB_REPO from GitHub." >&2; exit 1; }
+  OIDC_SUBJECT="repo:${GITHUB_REPO%%/*}@${owner_id}/${GITHUB_REPO#*/}@${repo_id}:ref:refs/heads/main"
+fi
+SUBJECT="$OIDC_SUBJECT"
 if ! quiet az identity federated-credential show -g "$RESOURCE_GROUP" --identity-name "$IDENTITY" -n github-main; then
   az identity federated-credential create -g "$RESOURCE_GROUP" --identity-name "$IDENTITY" -n github-main \
     --issuer "https://token.actions.githubusercontent.com" \
     --subject "$SUBJECT" --audiences "api://AzureADTokenExchange" -o none
   note "trust created for: $SUBJECT"
+elif [ "$(az identity federated-credential show -g "$RESOURCE_GROUP" --identity-name "$IDENTITY" -n github-main --query subject -o tsv)" != "$SUBJECT" ]; then
+  # An older run of this script wrote the name-only form, which GitHub never sends.
+  az identity federated-credential update -g "$RESOURCE_GROUP" --identity-name "$IDENTITY" -n github-main \
+    --subject "$SUBJECT" -o none
+  note "trust corrected to: $SUBJECT"
 else
   note "trust already exists for: $SUBJECT"
 fi
