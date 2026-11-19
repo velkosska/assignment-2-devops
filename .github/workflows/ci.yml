@@ -4,9 +4,11 @@ on:
   push:
   pull_request:
 
+# A newer push cancels the older run of the same branch, except on main: cancelling
+# a run in the middle of a deployment could leave Azure half updated.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -196,3 +198,81 @@ jobs:
           else
             echo "Built ${{ matrix.service }} without pushing (not a push to main)" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # CD, step 1: deploy the images that `images` just pushed for this commit.
+  # Runs only on a push to main and only after test, integration, system and images
+  # passed for the same commit (needs). Pull requests never reach Azure.
+  deploy-services:
+    name: deploy services
+    needs: [images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # lets this job ask GitHub for the OpenID Connect token Azure trusts
+      contents: read
+    # One deployment at a time, and a newer push waits instead of cancelling a half-done one.
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    # Names, not secrets. tests/system checks that they match system.yaml.
+    env:
+      PREFIX: mvelkoska
+      RESOURCE_GROUP: rg-mvelkoska
+      UI_STORAGE_ACCOUNT: mvelkoska
+      AZURE_EXTENSION_USE_DYNAMIC_INSTALL: yes_without_prompt
+    steps:
+      # No Azure password anywhere: the managed identity mvelkoska-github trusts only
+      # runs on main of this repository. Do not add `environment:` to this job, it would
+      # change the token's subject and Azure would refuse the sign-in.
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy catalog and loans
+        env:
+          CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
+          LOANS_DB_URL: ${{ secrets.LOANS_DB_URL }}
+        run: |
+          set -euo pipefail
+          registry="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+
+          # The only origin the services accept calls from: the UI's static website.
+          ui_origin="$(az storage account show -g "$RESOURCE_GROUP" -n "$UI_STORAGE_ACCOUNT" \
+            --query primaryEndpoints.web -o tsv)"
+          ui_origin="${ui_origin%/}"
+
+          # The services find each other through these URLs, read from Azure so they are
+          # never hardcoded.
+          fqdn() {
+            az containerapp show -g "$RESOURCE_GROUP" -n "${PREFIX}-$1" \
+              --query properties.configuration.ingress.fqdn -o tsv
+          }
+          catalog_url="https://$(fqdn catalog)"
+          loans_url="https://$(fqdn loans)"
+
+          # deploy <service> <database url> [VAR=value ...]
+          deploy() {
+            local service="$1" db_url="$2"
+            shift 2
+            local app="${PREFIX}-${service}"
+            # The database URL becomes a Container Apps secret. The app only ever sees
+            # a reference to it (secretref:), never a plain environment variable.
+            az containerapp secret set -g "$RESOURCE_GROUP" -n "$app" \
+              --secrets "database-url=${db_url}" -o none
+            # The image is tagged with this commit, so Azure runs exactly what CI tested.
+            # Replica limits are set on every deploy: scale to zero, at most one replica,
+            # so a migration at startup never runs twice at once.
+            az containerapp update -g "$RESOURCE_GROUP" -n "$app" \
+              --image "${registry}/lend-${service}:${GITHUB_SHA}" \
+              --min-replicas 0 --max-replicas 1 \
+              --replace-env-vars PORT=8000 DATABASE_URL=secretref:database-url \
+                ALLOWED_ORIGIN="$ui_origin" GIT_SHA="$GITHUB_SHA" "$@" -o none
+            echo "Deployed ${registry}/lend-${service}:${GITHUB_SHA} to ${app}" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # 10 seconds, not 2: the other service may be scaled to zero and needs time to start.
+          deploy catalog "$CATALOG_DB_URL" LOANS_URL="$loans_url" LOANS_TIMEOUT_S=10
+          deploy loans "$LOANS_DB_URL" CATALOG_URL="$catalog_url" CATALOG_TIMEOUT_S=10

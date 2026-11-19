@@ -100,3 +100,12 @@ def test_paths_in_system_yaml_exist(service):
     assert (ROOT / entry["path"] / "Dockerfile").is_file()
     assert list((ROOT / entry["migrations"]).glob("*.sql")), "no migrations found"
     assert (ROOT / SYSTEM["ui"]["path"]).is_dir()
+
+
+def test_deploy_job_targets_the_resources_in_system_yaml():
+    """The workflow repeats three names; they must be the ones system.yaml declares."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    env = workflow["jobs"]["deploy-services"]["env"]
+    assert env["PREFIX"] == SYSTEM["prefix"]
+    assert env["RESOURCE_GROUP"] == SYSTEM["azure"]["resource_group"]
+    assert env["UI_STORAGE_ACCOUNT"] == SYSTEM["ui"]["storage_account"]
