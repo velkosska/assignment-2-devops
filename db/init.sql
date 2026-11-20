@@ -24,13 +24,23 @@ GO
 USE catalog;
 GO
 IF USER_ID('catalog_user') IS NULL CREATE USER catalog_user FOR LOGIN catalog_user;
-ALTER ROLE db_owner ADD MEMBER catalog_user;
+-- What the service needs and nothing more: change its schema (migrations), read and
+-- write its data. Same roles as Azure (infra/create_logins.py), not db_owner.
+ALTER ROLE db_ddladmin ADD MEMBER catalog_user;
+ALTER ROLE db_datareader ADD MEMBER catalog_user;
+ALTER ROLE db_datawriter ADD MEMBER catalog_user;
+IF IS_ROLEMEMBER('db_owner', 'catalog_user') = 1 ALTER ROLE db_owner DROP MEMBER catalog_user;
 GO
 
 USE loans;
 GO
 IF USER_ID('loans_user') IS NULL CREATE USER loans_user FOR LOGIN loans_user;
-ALTER ROLE db_owner ADD MEMBER loans_user;
+-- What the service needs and nothing more: change its schema (migrations), read and
+-- write its data. Same roles as Azure (infra/create_logins.py), not db_owner.
+ALTER ROLE db_ddladmin ADD MEMBER loans_user;
+ALTER ROLE db_datareader ADD MEMBER loans_user;
+ALTER ROLE db_datawriter ADD MEMBER loans_user;
+IF IS_ROLEMEMBER('db_owner', 'loans_user') = 1 ALTER ROLE db_owner DROP MEMBER loans_user;
 GO
 
 PRINT 'db-init: databases catalog and loans and their logins are ready';

@@ -14,6 +14,7 @@ that setup.sh reads:
 
   RESULT <service> created|rotated|exists
   LOGIN_FORM <service> plain|at-server
+  ROLES <service> db_datareader,db_datawriter,db_ddladmin
   VERIFIED <service>
 """
 
@@ -30,6 +31,10 @@ RETRIES = 24  # about 5 minutes: a database resuming, or a new firewall rule spr
 # the firewall yet. Both pass by themselves, so wait instead of giving up.
 RETRY_CODES = {40613, 40615}
 RETRY_WORDS = ("not currently available", "timeout", "timed out")
+# What a service needs in its own database, and nothing more: change its schema
+# (migrations at startup), read and write its data. Not db_owner, which could also manage
+# users and role members and do anything else in the database.
+ROLES = ("db_ddladmin", "db_datareader", "db_datawriter")
 HINTS = {
     40615: "the server firewall does not allow this IP yet (or the rule is for another IP)",
     40613: "the database is paused or still resuming",
@@ -92,6 +97,46 @@ def connect(user, password, database, forms=None, retries=RETRIES):
     )
 
 
+def check_privileges(cursor, login):
+    """Prove what the user can and cannot do, by acting as it from the admin connection.
+
+    Works whether the login is new or already existed, because it needs no password.
+    """
+    cursor.execute(
+        "SELECT r.name FROM sys.database_role_members m "
+        "JOIN sys.database_principals r ON r.principal_id = m.role_principal_id "
+        "JOIN sys.database_principals u ON u.principal_id = m.member_principal_id "
+        "WHERE u.name = %s",
+        (login,),
+    )
+    roles = sorted(row[0] for row in cursor.fetchall())
+    if roles != sorted(ROLES):
+        raise SystemExit(f"{login} has the roles {roles}, expected {sorted(ROLES)}")
+
+    probe = "dbo.privilege_probe"
+    drop = f"IF OBJECT_ID('{probe}') IS NOT NULL DROP TABLE {probe}"
+    cursor.execute(drop)  # left over from an interrupted run
+    can_create_user = False
+    cursor.execute(f"EXECUTE AS USER = '{login}'")
+    try:
+        cursor.execute(f"CREATE TABLE {probe} (id INT)")  # db_ddladmin
+        cursor.execute(f"INSERT INTO {probe} VALUES (1)")  # db_datawriter
+        cursor.execute(f"SELECT id FROM {probe}")  # db_datareader
+        cursor.fetchall()
+        try:
+            cursor.execute("CREATE USER privilege_probe WITHOUT LOGIN")
+            can_create_user = True
+        except pymssql.Error:
+            pass  # expected: managing users is the admin's job, not the service's
+    finally:
+        cursor.execute("REVERT")
+        cursor.execute(drop)
+    if can_create_user:
+        cursor.execute("DROP USER privilege_probe")
+        raise SystemExit(f"{login} can create users: it has too many rights")
+    return roles
+
+
 def main():
     admin_user = os.environ["SQL_ADMIN_USER"]
     admin_password = os.environ["SQL_ADMIN_PASSWORD"]
@@ -134,7 +179,15 @@ def main():
         cursor.execute(
             f"IF USER_ID('{login}') IS NULL CREATE USER [{login}] FOR LOGIN [{login}]"
         )
-        cursor.execute(f"ALTER ROLE db_owner ADD MEMBER [{login}]")
+        for role in ROLES:
+            cursor.execute(f"ALTER ROLE {role} ADD MEMBER [{login}]")
+        # An earlier version of this script made the user db_owner: take that back.
+        cursor.execute(
+            f"IF IS_ROLEMEMBER('db_owner', '{login}') = 1 "
+            f"ALTER ROLE db_owner DROP MEMBER [{login}]"
+        )
+        roles = check_privileges(cursor, login)
+        print(f"ROLES {name} {','.join(roles)}", flush=True)
         connection.close()
 
     # Prove it with the real login, but only when we know its password.
