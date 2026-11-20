@@ -252,6 +252,8 @@ set_secret() { printf '%s' "$2" | gh secret set "$1" --repo "$GITHUB_REPO" >/dev
 
 for service in $SERVICES; do
   result="$(field RESULT "$service")"
+  [ -n "$(field ROLES "$service")" ] || { echo "No role check reported for $service" >&2; exit 1; }
+  note "${service}_user has only: $(field ROLES "$service") (checked by acting as the user)"
   case "$result" in
     created | rotated)
       user="${service}_user"
