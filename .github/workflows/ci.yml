@@ -337,3 +337,96 @@ jobs:
           url="$(az storage account show -g "$RESOURCE_GROUP" -n "$UI_STORAGE_ACCOUNT" \
             --query primaryEndpoints.web -o tsv)"
           echo "Published the UI to ${url}" >> "$GITHUB_STEP_SUMMARY"
+
+  # CD, step 3: prove that what is running is what was just deployed. Without this a deploy
+  # that starts a broken app, or leaves an older revision serving, would still look green.
+  verify:
+    name: verify deployment
+    needs: [deploy-services, deploy-ui]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+    # Names, not secrets. tests/system checks that they match system.yaml.
+    env:
+      PREFIX: mvelkoska
+      RESOURCE_GROUP: rg-mvelkoska
+      UI_STORAGE_ACCOUNT: mvelkoska
+      # Seconds to wait for each service. A service scaled to zero has to start its
+      # container and wake a paused database, which takes about a minute.
+      HEALTH_WAIT_S: 600
+    steps:
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check the services and the UI
+        run: |
+          set -euo pipefail
+
+          fqdn() {
+            az containerapp show -g "$RESOURCE_GROUP" -n "${PREFIX}-$1" \
+              --query properties.configuration.ingress.fqdn -o tsv
+          }
+          catalog_url="https://$(fqdn catalog)"
+          loans_url="https://$(fqdn loans)"
+          ui_url="$(az storage account show -g "$RESOURCE_GROUP" -n "$UI_STORAGE_ACCOUNT" \
+            --query primaryEndpoints.web -o tsv)"
+          ui_url="${ui_url%/}"
+
+          tmp="$(mktemp -d)"
+          failed=0
+          {
+            echo "| Check | Result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Asks /health until the service answers 200 with its database ok, the version
+          # of this commit, and CORS open for the UI and nobody else. The version check is
+          # what proves the new revision is the one serving.
+          wait_for_health() {
+            local name="$1" url="$2" started=$SECONDS
+            until curl -fsS --max-time 30 -D "$tmp/headers" -o "$tmp/body" \
+                -H "Origin: ${ui_url}" "${url}/health" 2> "$tmp/error" \
+              && jq -e --arg sha "$GITHUB_SHA" \
+                '.status == "ok" and .db == "ok" and .version == $sha' "$tmp/body" > /dev/null \
+              && tr -d '\r' < "$tmp/headers" \
+                | grep -iFxq "access-control-allow-origin: ${ui_url}"; do
+              if [ $((SECONDS - started)) -ge "$HEALTH_WAIT_S" ]; then
+                echo "::error::${name} is not healthy on ${GITHUB_SHA} after ${HEALTH_WAIT_S}s"
+                cat "$tmp/error" "$tmp/body" 2> /dev/null || true
+                echo "| ${name} | not healthy on \`${GITHUB_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+                return 1
+              fi
+              echo "${name} is not ready yet ($((SECONDS - started))s), asking again"
+              sleep 5
+            done
+            echo "${name}: $(cat "$tmp/body")"
+            echo "| ${name} | healthy, version \`$(jq -r .version "$tmp/body")\`, CORS only for the UI |" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # The page is served and its config.js points at these two services.
+          check_ui() {
+            if curl -fsS --max-time 30 "${ui_url}/index.html" | grep -q "Lend" \
+              && curl -fsS --max-time 30 "${ui_url}/config.js" \
+                | grep -Fq "$catalog_url" \
+              && curl -fsS --max-time 30 "${ui_url}/config.js" \
+                | grep -Fq "$loans_url"; then
+              echo "ui: served, config.js points at both services"
+              echo "| ui | served, \`config.js\` points at both services |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::the UI at ${ui_url} is missing or does not point at the services"
+              echo "| ui | missing or wrong \`config.js\` |" >> "$GITHUB_STEP_SUMMARY"
+              return 1
+            fi
+          }
+
+          check_ui || failed=1
+          wait_for_health catalog "$catalog_url" || failed=1
+          wait_for_health loans "$loans_url" || failed=1
+          exit "$failed"
