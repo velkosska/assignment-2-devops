@@ -57,7 +57,7 @@ docker compose down -v            # also delete the database
 | `CATALOG_URL` | loans | `http://catalog:8000` | Base URL of the catalog service |
 | `CATALOG_TIMEOUT_S` | loans | `2` | Timeout for calls to catalog |
 
-The UI reads the two service URLs from `ui/config.js`. The committed file points at localhost, and deployment will generate it.
+The UI reads the two service URLs from `ui/config.js`. The committed file points at localhost, and the deploy ui job writes the Azure addresses into the copy it uploads.
 
 ## Run a single service
 
@@ -112,6 +112,7 @@ The tests stop and start the `catalog` and `loans` containers themselves, so do 
 4. **images**, once per service, only if `test`, `integration` and `system` passed: build the image from `services/<name>/Dockerfile`. A failed build fails the run.
 5. **publish**, only on a push to `main`: the same `images` job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
 6. **deploy services**, only on a push to `main`, after `images`: see "Deployment to Azure" below.
+7. **deploy ui**, only on a push to `main`, after `deploy services`: publishes the UI to the storage account's static website.
 
 ### System description
 
@@ -147,6 +148,15 @@ On a push to `main`, after every job above passed for that same commit, the **de
 
 Only one deployment runs at a time (`concurrency: deploy`, without cancelling), and a newer push to `main` does not cancel a run in progress. Do not add `environment:` to the job: it would change the token's subject and Azure would refuse the sign-in.
 
+Then the **deploy ui** job (`needs: [deploy-services]`, also only on `main`) publishes the UI:
+
+1. It signs in the same way, copies `ui/` to a temporary folder and writes the `config.js` of that copy, with the two service addresses read from Azure (`az containerapp show`). The committed `ui/config.js` stays the localhost one used by docker compose.
+2. `az storage blob upload-batch` uploads the copy to the `$web` container of the storage account, with `Cache-Control: no-cache` so a visitor never sees an old page next to a new API. The identity is Contributor on the resource group, which lets the command read the storage account key at that moment. No key is stored anywhere, and the identity holds no blob data role.
+
+The UI then lives at https://mvelkoska.z28.web.core.windows.net, which is also the only origin the services accept.
+
+**Waking services.** On Azure a service that has been idle is scaled to zero and its database may be paused, so the first request can take about a minute. Azure answers it with `503 App port is not ready` after about 30 seconds, without CORS headers, so the browser reports a failed fetch. `ui/app.js` therefore waits up to 35 seconds per attempt, tries a read up to three times, and shows "Catalog is starting up after a quiet period" while a request is slow. Writes are never repeated automatically, because one that got no answer may have happened. A 503 with a JSON `error` is the service reporting that the other one is down, which is a real answer and is shown as it is.
+
 | GitHub secret | Holds | Written by |
 |---|---|---|
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | Identifiers of the managed identity and subscription, not passwords | `infra/setup.sh` |
@@ -180,7 +190,7 @@ What the script does, in order. Each step checks first and skips what already ex
 1. Refuses to run unless `PREFIX` and `RESOURCE_GROUP` are set, the active subscription is Azure for Students, and the resource group exists. It never creates a resource group.
 2. Registers the providers `Microsoft.App`, `Microsoft.OperationalInsights` and `Microsoft.ManagedIdentity`. They are off by default on a student subscription and Container Apps cannot be created without them.
 3. Creates the managed identity `mvelkoska-github` with a federated credential for `repo:velkosska@139571183/assignment-2-devops@1453003403:ref:refs/heads/main`, so only workflow runs on `main` of this repository can sign in as it (OpenID Connect, no password anywhere). It gets Contributor on the resource group and nothing wider. The numbers are the owner id and the repository id, which the script reads from GitHub: GitHub puts them in the token's subject, so a trust written with names only never matches and Azure answers `AADSTS700213`. If an older run left the name-only form, the script corrects it.
-4. If `PROFESSOR_ID` is set, gives the professor Reader on the resource group. Run the script again with it before submitting if it was not known the first time.
+4. If `PROFESSOR_ID` is set, gives the professor Reader on the resource group. I did it by hand on 2026-11-20 with `az role assignment create --assignee amartini@faculty.ie.edu --role Reader --scope "$RG_ID"` (`RG_ID` is the id of `rg-mvelkoska`), which does the same as this step.
 5. Renames the database from the guide to `mvelkoska-catalog-db`, creates `mvelkoska-loans-db`, and makes sure both are on the free offer with 0.5 to 1 vCore and locally redundant backups. The server from the guide had its public endpoint switched off, which blocks every firewall rule, so the script switches it on (the Container Apps reach the database through it) and allows Azure services through the firewall.
 6. Opens the firewall for one IP only while it runs (the public IP the database sees, read from inside the container that connects, because it can differ from your machine's own). It does this early, because a new rule can take a few minutes to spread, and it keeps retrying for up to 5 minutes while the rule spreads or a paused database resumes. It asked for the SQL admin password at the start (not shown, not saved). Then it creates one login per service, `catalog_user` and `loans_user`, each with access to its own database only. It then proves this by connecting as each login and failing to open the other database. This step runs inside the `lend-catalog` image, which already contains `pymssql`, so nothing is installed on your machine.
 7. Creates the Container Apps environment and the two apps, from the public `latest` images, with minimum 0 and maximum 1 replica, so migrations run at startup never run twice at once. The pipeline replaces the image with the commit SHA and sets every secret and variable.

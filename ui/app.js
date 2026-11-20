@@ -1,29 +1,88 @@
 const { CATALOG_URL, LOANS_URL } = window.CONFIG;
-const REQUEST_TIMEOUT_MS = 5000;
+// On Azure a service that has been idle is scaled to zero, and its database may be paused.
+// The first request then waits for the container and the database: Azure answers 503
+// "App port is not ready" after about 30 seconds, and that answer has no CORS headers, so
+// the browser reports it as a failed fetch. So a request waits longer than that, a read is
+// tried a few times, and the page says what is happening instead of showing an error.
+const REQUEST_TIMEOUT_MS = 35000;
+const GET_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 4000;
+const SLOW_AFTER_MS = 3000;
 
 class ApiError extends Error {}
 
-async function call(service, baseUrl, path, options = {}) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// service name -> number of slow requests in flight
+const waking = new Map();
+
+function showWaking(service, change) {
+  waking.set(service, (waking.get(service) || 0) + change);
+  let box = document.getElementById("wakeup");
+  if (!box) {
+    box = document.createElement("p");
+    box.id = "wakeup";
+    box.className = "notice";
+    document.getElementById("notices").before(box);
+  }
+  const names = [...waking].filter(([, count]) => count > 0).map(([name]) => name);
+  box.hidden = names.length === 0;
+  box.textContent =
+    `${names.join(" and ")} ${names.length > 1 ? "are" : "is"} starting up after a quiet period. ` +
+    "This can take about a minute. The page fills in by itself.";
+}
+
+async function attempt(baseUrl, path, options) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let response;
   try {
-    response = await fetch(baseUrl + path, {
+    const response = await fetch(baseUrl + path, {
       method: options.method || "GET",
       headers: options.body ? { "Content-Type": "application/json" } : {},
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: controller.signal,
     });
+    const data = await response.json().catch(() => null);
+    return { response, data };
   } catch {
-    throw new ApiError(`${service} service unavailable. Try again shortly.`);
+    return null; // no answer: connection refused, timeout, or Azure's 503 without CORS headers
   } finally {
     clearTimeout(timer);
   }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new ApiError(data.error || `${service} service answered ${response.status}.`);
+}
+
+async function call(service, baseUrl, path, options = {}) {
+  // Only reads are tried again. A write that got no answer may or may not have happened.
+  const attempts = (options.method || "GET") === "GET" ? GET_ATTEMPTS : 1;
+  let slow = false;
+  const slowTimer = setTimeout(() => {
+    slow = true;
+    showWaking(service, 1);
+  }, SLOW_AFTER_MS);
+  try {
+    for (let n = 1; ; n++) {
+      const result = await attempt(baseUrl, path, options);
+      // A 503 that carries {"error": ...} is the service itself saying the other one is down.
+      // That is a real answer. A 503 without it comes from Azure's ingress: not started yet.
+      const notReady = result === null || (result.response.status === 503 && !result.data?.error);
+      if (!notReady) {
+        const { response, data } = result;
+        if (!response.ok) {
+          throw new ApiError(data?.error || `${service} service answered ${response.status}.`);
+        }
+        return data ?? {};
+      }
+      if (n >= attempts) {
+        throw new ApiError(
+          `${service} service is not answering yet (it may still be starting up). Wait a moment and try again.`,
+        );
+      }
+      await sleep(RETRY_DELAY_MS);
+    }
+  } finally {
+    clearTimeout(slowTimer);
+    if (slow) showWaking(service, -1);
   }
-  return data;
 }
 
 const catalog = (path, options) => call("Catalog", CATALOG_URL, path, options);
