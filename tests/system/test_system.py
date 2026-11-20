@@ -102,7 +102,7 @@ def test_paths_in_system_yaml_exist(service):
     assert (ROOT / SYSTEM["ui"]["path"]).is_dir()
 
 
-@pytest.mark.parametrize("job", ["deploy-services", "deploy-ui"])
+@pytest.mark.parametrize("job", ["deploy-services", "deploy-ui", "verify"])
 def test_deploy_jobs_target_the_resources_in_system_yaml(job):
     """The workflow repeats three names; they must be the ones system.yaml declares."""
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
@@ -123,3 +123,16 @@ def test_ui_deploy_publishes_the_ui_folder_with_the_service_addresses():
     for service in SYSTEM["ui"]["calls"]:
         assert f"{service.upper()}_URL:" in script
         assert f"fqdn {service})" in script
+
+
+def test_verify_job_checks_the_deployed_version_of_every_service():
+    """verify runs after both deploys, only on main, and compares each version with the commit."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["verify"]
+    assert set(job["needs"]) == {"deploy-services", "deploy-ui"}
+    assert "refs/heads/main" in job["if"]
+    script = next(step["run"] for step in job["steps"] if step.get("name") == "Check the services and the UI")
+    assert ".version == $sha" in script
+    assert '--arg sha "$GITHUB_SHA"' in script
+    for service in SYSTEM["services"]:
+        assert f"wait_for_health {service} " in script

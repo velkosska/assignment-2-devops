@@ -113,6 +113,7 @@ The tests stop and start the `catalog` and `loans` containers themselves, so do 
 5. **publish**, only on a push to `main`: the same `images` job logs in to GHCR with the built-in `GITHUB_TOKEN` and pushes the image, tagged with the commit SHA and `latest`.
 6. **deploy services**, only on a push to `main`, after `images`: see "Deployment to Azure" below.
 7. **deploy ui**, only on a push to `main`, after `deploy services`: publishes the UI to the storage account's static website.
+8. **verify deployment**, only on a push to `main`, after both deploy jobs: checks that what runs on Azure is this commit.
 
 ### System description
 
@@ -154,6 +155,12 @@ Then the **deploy ui** job (`needs: [deploy-services]`, also only on `main`) pub
 2. `az storage blob upload-batch` uploads the copy to the `$web` container of the storage account, with `Cache-Control: no-cache` so a visitor never sees an old page next to a new API. The identity is Contributor on the resource group, which lets the command read the storage account key at that moment. No key is stored anywhere, and the identity holds no blob data role.
 
 The UI then lives at https://mvelkoska.z28.web.core.windows.net, which is also the only origin the services accept.
+
+Last, the **verify deployment** job (`needs: [deploy-services, deploy-ui]`) checks the result, so a deploy that starts a broken app, or leaves an older revision serving, turns the run red instead of looking green:
+
+1. The UI's `index.html` is served and its `config.js` names both service addresses.
+2. For each service, `/health` is asked until it answers `200` with `status` and `db` both `ok` and a `version` equal to the commit being deployed (`github.sha`). That is what proves the new revision is the one serving. The request also carries `Origin` set to the UI, and the answer must allow exactly that origin.
+3. It keeps asking for up to 10 minutes per service (`HEALTH_WAIT_S`), because a service scaled to zero has to start its container and wake a paused database first, which takes about a minute. On failure it prints the last answer. Either way it writes a table with the versions it found in the run summary.
 
 **Waking services.** On Azure a service that has been idle is scaled to zero and its database may be paused, so the first request can take about a minute. Azure answers it with `503 App port is not ready` after about 30 seconds, without CORS headers, so the browser reports a failed fetch. `ui/app.js` therefore waits up to 35 seconds per attempt, tries a read up to three times, and shows "Catalog is starting up after a quiet period" while a request is slow. Writes are never repeated automatically, because one that got no answer may have happened. A 503 with a JSON `error` is the service reporting that the other one is down, which is a real answer and is shown as it is.
 
