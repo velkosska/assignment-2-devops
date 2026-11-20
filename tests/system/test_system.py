@@ -102,10 +102,24 @@ def test_paths_in_system_yaml_exist(service):
     assert (ROOT / SYSTEM["ui"]["path"]).is_dir()
 
 
-def test_deploy_job_targets_the_resources_in_system_yaml():
+@pytest.mark.parametrize("job", ["deploy-services", "deploy-ui"])
+def test_deploy_jobs_target_the_resources_in_system_yaml(job):
     """The workflow repeats three names; they must be the ones system.yaml declares."""
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    env = workflow["jobs"]["deploy-services"]["env"]
+    env = workflow["jobs"][job]["env"]
     assert env["PREFIX"] == SYSTEM["prefix"]
     assert env["RESOURCE_GROUP"] == SYSTEM["azure"]["resource_group"]
     assert env["UI_STORAGE_ACCOUNT"] == SYSTEM["ui"]["storage_account"]
+
+
+def test_ui_deploy_publishes_the_ui_folder_with_the_service_addresses():
+    """deploy-ui copies the folder system.yaml names and writes both service URLs into config.js."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["deploy-ui"]
+    assert job["needs"] == ["deploy-services"]
+    assert "refs/heads/main" in job["if"]
+    script = next(step["run"] for step in job["steps"] if step.get("name") == "Publish the UI")
+    assert f"cp -R {SYSTEM['ui']['path']} " in script
+    for service in SYSTEM["ui"]["calls"]:
+        assert f"{service.upper()}_URL:" in script
+        assert f"fqdn {service})" in script

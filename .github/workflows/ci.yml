@@ -276,3 +276,64 @@ jobs:
           # 10 seconds, not 2: the other service may be scaled to zero and needs time to start.
           deploy catalog "$CATALOG_DB_URL" LOANS_URL="$loans_url" LOANS_TIMEOUT_S=10
           deploy loans "$LOANS_DB_URL" CATALOG_URL="$catalog_url" CATALOG_TIMEOUT_S=10
+
+  # CD, step 2: publish the UI to the storage account's static website, pointed at the two
+  # services that deploy-services has just updated. Same rules as above: main only, and the
+  # same OpenID Connect sign-in, so there is still no Azure password anywhere.
+  deploy-ui:
+    name: deploy ui
+    needs: [deploy-services]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    # Names, not secrets. tests/system checks that they match system.yaml.
+    env:
+      PREFIX: mvelkoska
+      RESOURCE_GROUP: rg-mvelkoska
+      UI_STORAGE_ACCOUNT: mvelkoska
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish the UI
+        run: |
+          set -euo pipefail
+
+          # The UI is static files, so it learns where the services are from config.js.
+          # The addresses are read from Azure, not hardcoded, and written into a copy of
+          # ui/: the committed config.js (localhost, for docker compose) is never changed.
+          fqdn() {
+            az containerapp show -g "$RESOURCE_GROUP" -n "${PREFIX}-$1" \
+              --query properties.configuration.ingress.fqdn -o tsv
+          }
+          site="${RUNNER_TEMP}/site"
+          cp -R ui "$site"
+          cat > "${site}/config.js" <<CONFIG
+          window.CONFIG = {
+            CATALOG_URL: "https://$(fqdn catalog)",
+            LOANS_URL: "https://$(fqdn loans)",
+          };
+          CONFIG
+
+          # The identity is Contributor on the resource group, which lets it read the
+          # storage account key (no key is stored anywhere) but not hold a blob data role.
+          # no-cache so a visitor never keeps an old page next to a new API.
+          az storage blob upload-batch \
+            --account-name "$UI_STORAGE_ACCOUNT" --auth-mode key \
+            --destination "\$web" --source "$site" \
+            --overwrite true --content-cache-control "no-cache" -o none
+
+          url="$(az storage account show -g "$RESOURCE_GROUP" -n "$UI_STORAGE_ACCOUNT" \
+            --query primaryEndpoints.web -o tsv)"
+          echo "Published the UI to ${url}" >> "$GITHUB_STEP_SUMMARY"
