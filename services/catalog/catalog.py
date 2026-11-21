@@ -22,6 +22,7 @@ def _tool(row):
         "category": row["category"],
         "retired": bool(row["retired"]),
         "created_at": row["created_at"],
+        "retired_at": row["retired_at"],
     }
 
 
@@ -49,7 +50,7 @@ def list_tools(connection):
     rows = fetch_all(
         connection,
         """
-        SELECT id, name, category, retired, created_at
+        SELECT id, name, category, retired, created_at, retired_at
         FROM tools
         ORDER BY name, id
         """,
@@ -60,7 +61,7 @@ def list_tools(connection):
 def get_tool(connection, tool_id):
     row = fetch_one(
         connection,
-        "SELECT id, name, category, retired, created_at FROM tools WHERE id = %s",
+        "SELECT id, name, category, retired, created_at, retired_at FROM tools WHERE id = %s",
         (tool_id,),
     )
     if row is None:
@@ -68,16 +69,18 @@ def get_tool(connection, tool_id):
     return _tool(row)
 
 
-def retire_tool(connection, tool_id, has_open_loan):
+def retire_tool(connection, tool_id, has_open_loan, now=None):
     """has_open_loan asks the loans service; it raises LoansUnavailable when it cannot."""
     tool = get_tool(connection, tool_id)
     if tool["retired"]:
         return tool
     if has_open_loan(tool_id):
         raise ToolIsOut("That tool is out on loan.")
+    if now is None:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     connection.cursor().execute(
-        "UPDATE tools SET retired = 1 WHERE id = %s",
-        (tool_id,),
+        "UPDATE tools SET retired = 1, retired_at = %s WHERE id = %s",
+        (now, tool_id),
     )
     connection.commit()
-    return {**tool, "retired": True}
+    return {**tool, "retired": True, "retired_at": now}
