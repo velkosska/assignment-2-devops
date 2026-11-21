@@ -85,6 +85,8 @@ Each service owns the schema of its own database as numbered files in `services/
 
 `services/catalog/tests/test_migrations.py` proves 002 keeps data: it builds a separate database at version 001, inserts tools (two of them retired), lets the real runner apply what is pending, and checks the ids and values are unchanged, the retired tools are backfilled, the others stay empty, each migration is recorded once, and a failing migration leaves no half-applied column behind.
 
+The run of this migration on Azure, with the data before and after and the startup log line, is in [`docs/evidence/migration-002.md`](docs/evidence/migration-002.md).
+
 ## Tests and coverage
 
 Tests run against a throwaway `*_test` database on the compose SQL Server. The other service is replaced by a stub function, so each service is tested on its own.
