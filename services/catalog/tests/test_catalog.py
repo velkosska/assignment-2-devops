@@ -13,6 +13,7 @@ from loans_client import LoansUnavailable
 from migrate import migrate
 
 NOW = "2026-10-06T12:00:00+00:00"
+LATER = "2026-10-07T09:30:00+00:00"
 
 
 def no_open_loan(tool_id):
@@ -42,7 +43,14 @@ def test_add_tool_rejects_blank_category(db):
 def test_add_tool_stores_an_available_tool(db):
     tool_id = add_tool(db, " Hammer ", " hand ", now=NOW)
     assert list_tools(db) == [
-        {"id": tool_id, "name": "Hammer", "category": "hand", "retired": False, "created_at": NOW}
+        {
+            "id": tool_id,
+            "name": "Hammer",
+            "category": "hand",
+            "retired": False,
+            "created_at": NOW,
+            "retired_at": None,
+        }
     ]
 
 
@@ -61,6 +69,12 @@ def test_retire_tool_marks_an_idle_tool_retired(db):
     tool_id = add_tool(db, "Hammer", "hand", now=NOW)
     assert retire_tool(db, tool_id, no_open_loan)["retired"] is True
     assert get_tool(db, tool_id)["retired"] is True
+
+
+def test_retire_tool_records_when_it_was_retired(db):
+    tool_id = add_tool(db, "Hammer", "hand", now=NOW)
+    assert retire_tool(db, tool_id, no_open_loan, now=LATER)["retired_at"] == LATER
+    assert get_tool(db, tool_id)["retired_at"] == LATER
 
 
 def test_retire_tool_refuses_a_tool_with_an_open_loan(db):
@@ -84,8 +98,10 @@ def test_retire_tool_raises_for_an_unknown_id(db):
 
 def test_retire_tool_leaves_an_already_retired_tool_without_asking_loans(db):
     tool_id = add_tool(db, "Hammer", "hand", now=NOW)
-    retire_tool(db, tool_id, no_open_loan)
-    assert retire_tool(db, tool_id, loans_down)["retired"] is True
+    retire_tool(db, tool_id, no_open_loan, now=LATER)
+    again = retire_tool(db, tool_id, loans_down, now="2027-01-01T00:00:00+00:00")
+    assert again["retired"] is True
+    assert get_tool(db, tool_id)["retired_at"] == LATER  # the first date is kept
 
 
 def test_a_second_migrate_applies_nothing(db):

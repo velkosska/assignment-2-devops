@@ -73,6 +73,18 @@ LOANS_URL=http://localhost:8002 python app.py
 
 `python app.py` applies migrations and then serves on `PORT` (default 8000). The same works for `services/loans` with `loans_user`, database `loans` and `CATALOG_URL`.
 
+## Database migrations
+
+Each service owns the schema of its own database as numbered files in `services/<name>/migrations/`. At startup the runner (`migrate.py`) creates `schema_migrations` if needed, applies every file that is not recorded there, in number order, and records each one in the same transaction. A file that fails is rolled back whole, and the service does not start. A second start logs `no pending migrations`. Files that were applied are never edited: a correction is a new file. There are no down migrations: the recovery plan is in ADR-7.
+
+| Service | Migration | What it does to data that already exists |
+|---|---|---|
+| catalog | `001_init.sql` | creates `tools` |
+| catalog | `002_add_retired_at.sql` | adds the nullable column `tools.retired_at` and gives the tools that are already retired their `created_at` as the best date known. Every row keeps its id and values. |
+| loans | `001_init.sql` | creates `members` and `loans` |
+
+`services/catalog/tests/test_migrations.py` proves 002 keeps data: it builds a separate database at version 001, inserts tools (two of them retired), lets the real runner apply what is pending, and checks the ids and values are unchanged, the retired tools are backfilled, the others stay empty, each migration is recorded once, and a failing migration leaves no half-applied column behind.
+
 ## Tests and coverage
 
 Tests run against a throwaway `*_test` database on the compose SQL Server. The other service is replaced by a stub function, so each service is tested on its own.
