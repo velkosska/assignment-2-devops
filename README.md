@@ -1,5 +1,7 @@
 # Lend
 
+**Live URL:** [https://mvelkoska.z28.web.core.windows.net](https://mvelkoska.z28.web.core.windows.net)
+
 A one-desk tool library for a volunteer workshop, split into two services along the seam of ADR-2:
 
 | Part | Folder | Owns | Local URL |
@@ -15,6 +17,8 @@ Each service is a Flask JSON API in its own container with its own SQL Server da
 
 Every outbound call has a 2 second timeout. If the other service is down, the call answers `503` with a clear message and writes nothing. The service's own endpoints and `/health` keep working.
 
+The report for Assignment 2 is [`REPORT_ASSIGNMENT2.md`](REPORT_ASSIGNMENT2.md). The Azure evidence for migration 002 (before and after data, the startup log line and the deployment run) is in [`docs/evidence/migration-002.md`](docs/evidence/migration-002.md). Partial-failure evidence (one service stopped, the other answering 503 and writing nothing) is in [`docs/evidence/partial-failure.md`](docs/evidence/partial-failure.md). The AI usage log for this assignment is in [`AI_USAGE_ASSIGNMENT2.md`](AI_USAGE_ASSIGNMENT2.md).
+
 ## Run the whole system locally
 
 Requirements: Docker Desktop. On Apple Silicon, enable *Settings → General → Use Rosetta for x86_64/amd64 emulation*, because the SQL Server image is amd64 only.
@@ -23,6 +27,8 @@ Requirements: Docker Desktop. On Apple Silicon, enable *Settings → General →
 cp .env.example .env
 docker compose up --build
 ```
+
+The values in `.env.example` (`Local-Sa_Passw0rd` and the two service passwords) are local placeholders for docker compose only. They are not Azure credentials. Azure database passwords are random strings written once by `infra/setup.sh` into GitHub secrets and never printed or committed. `.env` itself is listed in `.gitignore` and has never been in the repository.
 
 Open http://localhost:8080. Compose starts the services in this order:
 
@@ -223,3 +229,7 @@ An existing login is left alone, so a second run does not break the secret that 
 ## Assignment 1
 
 The Assignment 1 monolith (`app.py`, `lend/`, `templates/`, one SQLite file) was replaced by the split above. It is still in the Git history at the commit "Import the Assignment 1 monolith as the starting point". ADR-1 to ADR-5 describe it.
+
+## AI disclosure
+
+I acknowledge the use of Cursor to draft the split services, the Dockerfiles and compose file, the CI/CD workflow, the Azure setup script, the migrations, the system description tests, the ADR entries 6 to 10, and this README. Every change is logged in [`AI_USAGE_ASSIGNMENT2.md`](AI_USAGE_ASSIGNMENT2.md) with the prompt, what I accepted or changed, and an explanation in my own words. I checked the output against the tests, the compose stack, the Azure deployment and the post-deploy health checks before keeping it.

@@ -1,0 +1,25 @@
+{
+  "scenario": "catalog stopped with docker compose stop catalog",
+  "request": {
+    "method": "POST",
+    "url": "http://localhost:8002/loans",
+    "body": {
+      "tool_id": 1,
+      "member_id": 1
+    }
+  },
+  "response": {
+    "status": 503,
+    "body": {
+      "error": "Catalog service unavailable, so the tool cannot be checked. Try again shortly."
+    }
+  },
+  "loans_own_domain": {
+    "health": {
+      "db": "ok",
+      "status": "ok",
+      "version": "local"
+    },
+    "open_loans": []
+  }
+}
