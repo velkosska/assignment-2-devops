@@ -1,0 +1,28 @@
+{
+  "scenario": "loans stopped with docker compose stop loans",
+  "request": {
+    "method": "POST",
+    "url": "http://localhost:8001/tools/1/retire"
+  },
+  "response": {
+    "status": 503,
+    "body": {
+      "error": "Loans service unavailable, so the tool cannot be confirmed as not out. Try again shortly."
+    }
+  },
+  "catalog_own_domain": {
+    "health": {
+      "db": "ok",
+      "status": "ok",
+      "version": "local"
+    },
+    "tool": {
+      "category": "hand",
+      "created_at": "2026-11-22T15:36:26+00:00",
+      "id": 1,
+      "name": "Evidence Hammer",
+      "retired": false,
+      "retired_at": null
+    }
+  }
+}
